@@ -1,0 +1,334 @@
+服务器监控软件
+
+	cacti, nagios, zabbix
+
+cacti监控软件
+
+	php语言web程序(LAMP/LNMP), PHP(--enable-sockets)
+
+	http://www.cacti.net/
+
+	作用：展示数据
+
+获取被监控端的数据：
+
+	SNMP ---- 简单网络管理协议
+
+		端口：udp/161
+		认证方式：community团体名称
+			默认： public
+			
+	版本：
+
+		SNMP V1
+			使用community团体名进行认证 
+
+		SNMP V2
+			支持trap方式获取数据 
+			
+		SNMP V3
+		
+	
+	MIB--------管理信息库 
+
+		存放OID和监控对象名称的对应关系的文件 	1.3.6.1.2.1.	
+		
+	
+	软件：
+		net-snmp			被监控端 
+		net-snmp-utils		监控端 	
+		
+		
+		
+部署cacti监控端 
+
+1、SELinux, firewalld, ntpdate 
+
+2、部署lamp平台
+
+[root@cacti ~]# yum install -y httpd mariadb-server php php-mysql gd php-gd 
+
+[root@cacti ~]# systemctl start httpd
+[root@cacti ~]# systemctl enable httpd
+
+[root@cacti ~]# systemctl start mariadb
+[root@cacti ~]# systemctl enable mariadb
+
+[root@cacti html]# cat a.php  
+<?php
+  phpinfo();
+?>
+
+[root@cacti html]# cat b.php  
+<?php
+  $link=mysql_connect("localhost","root","");
+  if($link)
+     echo "aaa";
+  else
+     echo "bbb";
+?>
+[root@cacti html]# 
+
+
+2、安装snmp, rrdtool软件 
+
+[root@cacti ~]# yum install -y net-snmp net-snmp-utils rrdtool mariadb-devel net-snmp-devel
+
+[root@cacti ~]# systemctl start snmpd
+[root@cacti ~]# systemctl enable snmpd
+Created symlink from /etc/systemd/system/multi-user.target.wants/snmpd.service to /usr/lib/systemd/system/snmpd.service.
+[root@cacti ~]# 
+[root@cacti ~]# ss -anup | grep snmp
+UNCONN     0      0            *:161                      *:*                   users:(("snmpd",pid=2487,fd=6))
+[root@cacti ~]# 
+
+
+3、解压缩cacti到网页目录 
+
+[root@cacti ~]# tar zxf cacti-0.8.8h.tar.gz 
+[root@cacti ~]# mv cacti-0.8.8h /var/www/html/cacti
+
+
+4、导入cacti数据库 
+
+MariaDB [(none)]> CREATE DATABASE cactidb;
+
+MariaDB [(none)]> GRANT all ON cactidb.* TO 'cactiuser'@'localhost' IDENTIFIED BY 'redhat';
+
+MariaDB [(none)]> FLUSH PRIVILEGES;
+
+
+[root@cacti cacti]# mysql -u root -p cactidb < /var/www/html/cacti/cacti.sql 
+
+
+5、编辑cacti配置文件，指定数据库信息 
+
+[root@cacti include]# pwd
+/var/www/html/cacti/include
+
+[root@cacti include]# vim config.php 
+
+$database_type = "mysql";
+$database_default = "cactidb";
+$database_hostname = "localhost";
+$database_username = "cactiuser";
+$database_password = "redhat";
+$database_port = "3306";
+$database_ssl = false;
+
+
+在浏览器里输入http://192.168.122.101/cacti/进行安装
+
+安装完成后，cacti默认登录的用户名、密码均为admin
+
+
+
+手动运行poller.php脚本，测试是否可获取数据 
+
+# /usr/bin/php /var/www/html/cacti/poller.php 
+
+第1次运行时会出现以下警告：
+
+PHP Warning:  date(): It is not safe to rely on the system's timezone settings. You are *required* to use the date.timezone setting or the date_default_timezone_set() function. In case you used any of those methods and you are still getting this warning, you most likely misspelled the timezone identifier. We selected 'Asia/Chongqing' for 'CST/8.0/no DST' instead in /var/www/html/cacti/lib/functions.php on line 482
+
+
+解决办法：
+
+# vim /etc/php.ini
+
+date.timezone = Asia/Shanghai
+
+[root@cacti ~]# systemctl restart httpd
+
+通过计划任务执行收集数据的脚本 
+
+[root@cacti ~]# crontab -l
+*/5 * * * * /usr/bin/php /var/www/html/cacti/poller.php &> /dev/null
+
+
+
+
+
+
+
+
+
+
+
+安装spine插件 
+
+[root@localhost ~]# tar zxf cacti-spine-0.8.8h.tar.gz 
+[root@localhost ~]# cd cacti-spine-0.8.8h
+[root@localhost ~]# ./configure && make && make install 
+
+编辑spine的配置文件 
+
+[root@localhost etc]# pwd
+/usr/local/spine/etc
+
+[root@localhost etc]# cp spine.conf.dist spine.conf
+[root@localhost etc]# vim spine.conf
+
+DB_Host         localhost
+DB_Database     cactidb
+DB_User         cactiuser
+DB_Pass         redhat
+DB_Port         3306
+
+
+启动spine 
+
+[root@localhost spine]# /usr/local/spine/bin/spine -C /usr/local/spine/etc/spine.conf
+SPINE: Using spine config file [/usr/local/spine/etc/spine.conf]
+SPINE: Version 0.8.8h starting
+SPINE: Time: 0.2676 s, Threads: 5, Hosts: 2
+
+
+配置cacti使用spine 
+
+	console ---> setting---> paths --->  Spine Poller File Path ---> save
+
+	console ---> setting ---> poller ---> poller Type ---> save 
+
+
+
+	
+	
+	
+	
+	
+	
+	
+	
+
+配置cacti监控远程Linux主机 
+
+被监控端：
+
+安装net-snmp软件 
+
+[root@localhost ~]# yum install -y net-snmp
+
+
+编辑snmp配置文件 
+
+[root@localhost ~]# vim /etc/snmp/snmpd.conf 
+
+	com2sec notConfigUser  192.168.122.101       mypublic
+	access  notConfigGroup ""      any       noauth    exact  all none none
+	view all    included  .1                               80
+
+[root@node01 ~]# systemctl start snmpd
+[root@node01 ~]# systemctl enable snmpd
+Created symlink from /etc/systemd/system/multi-user.target.wants/snmpd.service to /usr/lib/systemd/system/snmpd.service.
+[root@node01 ~]# 
+[root@node01 ~]# ss -anup | grep snmpd
+UNCONN     0      0            *:161                      *:*                   users:(("snmpd",pid=3520,fd=6))
+
+在监控端测试通过SNMP协议获取数据是否正常
+
+[root@cacti ~]# snmpwalk -v 2c -c mypublic 192.168.122.102
+
+
+
+监控端：
+
+console ---> Device ---> Add  
+console ---> Create graphs for your new devices 
+
+
+
+
+
+
+
+配置导入ApacheStatus模板监控Apache状态信息
+
+
+被监控端：保证apahce状态信息输出正常 
+
+# yum install -y httpd 
+
+# vim /etc/httpd/conf/httpd.conf  
+
+LoadModule status_module modules/mod_status.so
+
+<Location /server-status>
+    SetHandler server-status
+    Require all granted
+</Location>
+
+#  systemctl start httpd
+#  systemctl enable httpd
+
+测试本地访问apache状态信息正常 http://192.168.87.101/status 
+
+n
+cacti监控端：
+
+[root@localhost ~]# unzip ApacheStats_0.8.2.zip 
+[root@localhost ~]# cd ApacheStats_0.8.2
+[root@localhost ApacheStats_0.8.2]# cp ss_apache_stats.php /var/www/html/cacti/scripts/		>>>复制获取apache状态数据的脚本 
+
+导入Apache_status模板 
+
+	import template ---> 浏览(Browser...)  
+
+
+添加一个监控主机(Apache)
+
+
+
+
+
+
+
+
+导入MySQL模板实现MySQL的监控 
+
+
+
+被监控端：
+
+安装mysql-server, 并创建授权用户
+
+[root@localhost ~]# yum install -y mysql-server
+
+[root@localhost ~]# mysql -u root -p
+
+mysql> GRANT super,process ON *.* TO 'martin'@'%' IDENTIFIED BY 'redhat';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> FLUSH PRIVILEGES;
+Query OK, 0 rows affected (0.00 sec)
+
+
+
+监控端：
+
+复制获取mysql状态数据的脚本 
+
+[root@localhost scripts]# cp ss_get_mysql_stats.php /var/www/html/cacti/scripts/
+
+
+下载模板：
+	http://forums.cacti.net/viewforum.php?f=12
+
+
+
+安装配置monitor插件 
+
+[root@localhost ~]# tar zxf monitor-v1.3-1.tgz -C /var/www/html/cacti/plugins
+
+Plugin Management ---> (略)
+
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
